@@ -76,7 +76,7 @@ const getLastBuild = async (buildType: BuildType, platform: ChromiumPlatform, re
   return getLastBuildUrl(buildType, platform, revision, zipName);
 };
 
-const getCurrentPlatform = (): string => {
+const getCurrentPlatform = (): ChromiumPlatform => {
   const platform = process.platform;
   const arch = process.arch;
   if (platform === "win32") return arch === "x64" ? "Win_x64" : "Win";
