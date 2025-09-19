@@ -1,0 +1,21 @@
+{
+  "name": "chromium-downloader",
+  "version": "0.0.1",
+  "description": "A simple tool to download specific versions of Chromium.",
+  "author": "Brendon Cambui <brendon@cambui.dev>",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "build": "tsc"
+  },
+  "packageManager": "yarn@4.9.1",
+  "dependencies": {
+    "axios": "^1.12.2",
+    "commander": "^14.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "tsx": "^4.20.5"
+  }
+}
