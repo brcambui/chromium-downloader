@@ -4,6 +4,8 @@ import fs from "fs";
 
 const LAST_REVISION_TEMPLATE = "https://commondatastorage.googleapis.com/chromium-browser-{build-type}/{platform}/LAST_CHANGE";
 const LAST_BUILD_TEMPLATE = "https://commondatastorage.googleapis.com/chromium-browser-{build-type}/{platform}/{revision}/{zip-name}";
+const CHROMIUMDASH_VERSION_URL = "https://chromiumdash.appspot.com/fetch_version?version=";
+const GCS_LIST_URL = "https://www.googleapis.com/storage/v1/b/chromium-browser-{build-type}/o";
 
 const PLATFORMS = [
   "Win",
@@ -58,7 +60,7 @@ const getLastRevisionUrl = (buildType: BuildType, platform: ChromiumPlatform) =>
     .replace("{platform}", platform);
 };
 
-const getLastBuildUrl = (buildType: BuildType, platform: ChromiumPlatform, revision: number, zipName: string) => {
+const getLastBuildUrl = (buildType: BuildType, platform: ChromiumPlatform, revision: string | number, zipName: string) => {
   return LAST_BUILD_TEMPLATE
     .replace("{build-type}", buildType)
     .replace("{platform}", platform)
@@ -72,7 +74,52 @@ const getLastRevision = async (buildType: BuildType, platform: ChromiumPlatform)
   return response.data;
 };
 
-const getLastBuild = async (buildType: BuildType, platform: ChromiumPlatform, revision: number, zipName: string): Promise<string> => {
+const resolveVersionToRevision = async (version: string): Promise<number> => {
+  // If it's already a plain integer revision, return it directly
+  if (/^\d+$/.test(version)) return parseInt(version, 10);
+
+  // Otherwise, look up the branch position from ChromiumDash
+  const response = await axios.get(`${CHROMIUMDASH_VERSION_URL}${encodeURIComponent(version)}`);
+  const position: number = response.data?.chromium_main_branch_position;
+  if (!position) {
+    throw new Error(`Could not resolve version "${version}" to a revision number. Response: ${JSON.stringify(response.data)}`);
+  }
+  console.log(`Resolved version ${version} → branch position ${position}`);
+  return position;
+};
+
+/**
+ * Not every revision has a snapshot build. This function searches the GCS bucket
+ * for the nearest available revision >= the given one that contains the desired zip.
+ */
+const findNearestAvailableRevision = async (buildType: BuildType, platform: ChromiumPlatform, revision: number, zipName: string): Promise<number> => {
+  const listUrl = GCS_LIST_URL.replace("{build-type}", buildType);
+  const response = await axios.get(listUrl, {
+    params: {
+      prefix: `${platform}/`,
+      startOffset: `${platform}/${revision}/`,
+      maxResults: 100,
+      fields: "items(name)",
+    },
+  });
+
+  const items: Array<{ name: string }> = response.data?.items ?? [];
+
+  for (const item of items) {
+    const match = item.name.match(new RegExp(`^${platform}/(\\d+)/${zipName.replace(".", "\\.")}$`));
+    if (match) {
+      const found = parseInt(match[1], 10);
+      if (found !== revision) {
+        console.log(`Revision ${revision} has no snapshot. Using nearest available revision: ${found}`);
+      }
+      return found;
+    }
+  }
+
+  throw new Error(`No available snapshot found for ${platform} near revision ${revision}.`);
+};
+
+const getLastBuild = async (buildType: BuildType, platform: ChromiumPlatform, revision: string | number, zipName: string): Promise<string> => {
   return getLastBuildUrl(buildType, platform, revision, zipName);
 };
 
@@ -86,14 +133,24 @@ const getCurrentPlatform = (): ChromiumPlatform => {
   return "Win";
 };
 
-const downloadChromium = async (buildType: BuildType, platform: ChromiumPlatform) => {
+const downloadChromium = async (buildType: BuildType, platform: ChromiumPlatform, version?: string) => {
   try {
     const zipName = getZipName(platform);
 
-    // Fetch the latest revision and build URL
-    const revision = await getLastRevision(buildType, platform);
+    // Use provided version/revision or fetch the latest
+    let revision: number;
+    if (version) {
+      revision = await resolveVersionToRevision(version);
+      console.log(`Downloading specific Chromium version for ${platform} (${buildType}):`);
+    } else {
+      revision = await getLastRevision(buildType, platform);
+      console.log(`Latest Chromium build for ${platform} (${buildType}):`);
+    }
+
+    // Not every revision has a snapshot; find the nearest one that does
+    revision = await findNearestAvailableRevision(buildType, platform, revision, zipName);
+
     const downloadUrl = await getLastBuild(buildType, platform, revision, zipName);
-    console.log(`Latest Chromium build for ${platform} (${buildType}):`);
     console.log(`Revision: ${revision}`);
     console.log(`Download URL: ${downloadUrl}`);
 
@@ -148,6 +205,7 @@ const program = new Command();
 program
   .option('-b, --build-type <type>', 'Build type ("continuous", "official", "snapshots")', "snapshots")
   .option('-p, --platform <platform>', `Platform (${PLATFORMS.join(", ")})`, getCurrentPlatform())
+  .option('-v, --version <version>', 'Specific Chromium version or revision to download (e.g. 145.0.7632.160)')
   .option('--list-platforms', 'List all supported platforms', () => {
     console.log("Supported platforms:");
     PLATFORMS.forEach(p => console.log(`- ${p}`));
@@ -162,4 +220,4 @@ program
 program.parse(process.argv);
 const options = program.opts();
 
-downloadChromium(options.buildType, options.platform);
+downloadChromium(options.buildType, options.platform, options.version);

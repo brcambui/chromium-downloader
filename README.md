@@ -42,11 +42,31 @@ yarn dev -- --list-build-types
 yarn dev -- -b snapshots -p Mac_Arm
 ```
 
+### Download a specific version or revision
+
+Pass a full Chromium version string or a raw integer branch-position revision:
+
+```sh
+# by version string (resolved via ChromiumDash)
+yarn dev -- -v 145.0.7632.160
+
+# by raw revision / branch position
+yarn dev -- -v 1234567
+
+# combine with platform and build type
+yarn dev -- -v 145.0.7632.160 -p Mac_Arm -b snapshots
+```
+
+When a version string is supplied it is looked up against the ChromiumDash API to obtain the corresponding `chromium_main_branch_position`. A plain integer is used directly as the revision.
+
+If the exact revision has no snapshot in the selected build type, the tool automatically advances to the nearest revision that does and logs a message before downloading.
+
 Alternatively, build first and run the compiled CLI:
 
 ```sh
 yarn build
 node dist/index.js -- -b snapshots -p Linux_x64
+node dist/index.js -- -v 145.0.7632.160 -p Linux_x64
 ```
 
 Tip: When running through a package script, pass CLI args after `--` so they reach the program.
@@ -62,6 +82,9 @@ Tip: When running through a package script, pass CLI args after `--` so they rea
     - Linux, Linux_x64, Linux_ChromiumOS_Full, Linux_ARM_Cross-Compile
     - Android, Android_Arm64
   - Defaults to a best-effort detection based on your OS and CPU arch
+- -v, --version <version>
+  - A specific Chromium version string (e.g. `145.0.7632.160`) or a raw integer revision/branch-position
+  - When omitted, the latest revision for the selected build type and platform is downloaded
 - --list-platforms
   - Prints all supported platform identifiers and exits
 - --list-build-types
@@ -81,11 +104,16 @@ Files are saved under `./chromium-downloads/` without extraction.
 ## How it works
 
 1. Resolve the platform and zip name
-2. Get the latest revision number from:
-   - `https://commondatastorage.googleapis.com/chromium-browser-{build-type}/{platform}/LAST_CHANGE`
-3. Build the download URL:
+2. Determine the target revision:
+   - **No `--version` flag:** fetches the latest revision from
+     `https://commondatastorage.googleapis.com/chromium-browser-{build-type}/{platform}/LAST_CHANGE`
+   - **`--version` is a plain integer:** used directly as the revision
+   - **`--version` is a version string:** resolved to a `chromium_main_branch_position` via
+     `https://chromiumdash.appspot.com/fetch_version?version={version}`
+3. Find the nearest available snapshot: queries the GCS bucket for objects with prefix `{platform}/{revision}/` and advances to the first revision `>=` the target that contains the requested zip file
+4. Build the download URL:
    - `https://commondatastorage.googleapis.com/chromium-browser-{build-type}/{platform}/{revision}/{zip-name}`
-4. Stream the download to disk, showing progress when `content-length` is available
+5. Stream the download to disk, showing progress when `content-length` is available
 
 ## Notes and caveats
 
